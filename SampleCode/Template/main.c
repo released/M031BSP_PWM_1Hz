@@ -44,7 +44,18 @@ uint8_t BitFlag = 0;
 #define SYS_CLK 									(48000000ul)
 #define PWM_PSC 								(1000)	
 #define PWM_FREQ 								(1)	
-#define PWM_DUTY                               (0)
+#define PWM_DUTY                              	(0)
+
+//#define ENABLE_PWM_CH0
+#define ENABLE_PWM_CH4
+
+#if defined (ENABLE_PWM_CH0)
+#define PWM_CHANNEL                           	(0)
+#define PWM_CHANNEL_MASK                     (PWM_CH_0_MASK)
+#elif defined (ENABLE_PWM_CH4)
+#define PWM_CHANNEL                           	(4)
+#define PWM_CHANNEL_MASK                     (PWM_CH_4_MASK)
+#endif
 
 //16 bit
 #define PWM_CNR 								((SYS_CLK/PWM_FREQ)/PWM_PSC - 1)
@@ -53,11 +64,11 @@ uint8_t BitFlag = 0;
 #define CalNewDutyCMR(pwm, u32ChannelNum, u32DutyCycle, u32CycleResolution)	(u32DutyCycle * (PWM_GET_CNR(pwm, u32ChannelNum) + 1) / u32CycleResolution)
 #define CalNewDuty(pwm, u32ChannelNum, u32DutyCycle, u32CycleResolution)		(PWM_SET_CMR(pwm, u32ChannelNum, CalNewDutyCMR(pwm, u32ChannelNum, u32DutyCycle, u32CycleResolution)))
 
-void PWM_Set_Duty(uint16_t duty)		// 1 ~ 1000 , 0.1 % to 100%
+void PWM_Set_Duty(PWM_T *pwm,uint32_t u32ChannelNum,uint32_t u32DutyCycle,uint32_t u32CycleResolution)		// 1 ~ 1000 , 0.1 % to 100%
 {
     uint32_t u32NewCMR = 0;
-	u32NewCMR = CalNewDutyCMR(PWM0, 0, duty, 1000);    
-	PWM_SET_CMR(PWM0, 0, u32NewCMR);
+	u32NewCMR = CalNewDutyCMR(pwm, u32ChannelNum, u32DutyCycle, u32CycleResolution);    
+	PWM_SET_CMR(pwm, u32ChannelNum, u32NewCMR);
 }
 
 
@@ -73,25 +84,25 @@ void PWM0_Init(void)
     */
 	
     /* Set PWM0 timer clock prescaler */
-    PWM_SET_PRESCALER(PWM0, 0, PWM_PSC - 1);
-
+    PWM_SET_PRESCALER(PWM0, PWM_CHANNEL, PWM_PSC - 1);
+	
     /* Set up counter type */
     PWM0->CTL1 &= ~PWM_CTL1_CNTTYPE0_Msk;
 
     /* Set PWM0 timer period */
-    PWM_SET_CNR(PWM0, 0, PWM_CNR);
-
+    PWM_SET_CNR(PWM0, PWM_CHANNEL, PWM_CNR);
+	
     /* Set PWM0 timer duty */
-    PWM_SET_CMR(PWM0, 0, PWM_CMR);	
-
+    PWM_SET_CMR(PWM0, PWM_CHANNEL, PWM_CMR);	
+	
     /* Set output level at zero, compare up, period(center) and compare down of specified channel */
-    PWM_SET_OUTPUT_LEVEL(PWM0, PWM_CH_0_MASK, PWM_OUTPUT_HIGH, PWM_OUTPUT_LOW, PWM_OUTPUT_NOTHING, PWM_OUTPUT_NOTHING);
-
+    PWM_SET_OUTPUT_LEVEL(PWM0, PWM_CHANNEL_MASK, PWM_OUTPUT_HIGH, PWM_OUTPUT_LOW, PWM_OUTPUT_NOTHING, PWM_OUTPUT_NOTHING);
+	
     /* Enable output of PWM0 channel 0 */
-    PWM_EnableOutput(PWM0, PWM_CH_0_MASK);
-
-	PWM_Start(PWM0, PWM_CH_0_MASK);
-
+    PWM_EnableOutput(PWM0, PWM_CHANNEL_MASK);
+	
+	PWM_Start(PWM0, PWM_CHANNEL_MASK);
+	
 	set_flag(flag_reverse , ENABLE);
 }
 
@@ -116,8 +127,8 @@ void TMR1_IRQHandler(void)
 		{
 			CNT_PWM = 1;
 			
-//			PWM_Set_Duty(duty);
-			CalNewDuty(PWM0, 0, duty, 1000);
+//			PWM_Set_Duty(PWM0, PWM_CHANNEL, duty, 1000);
+			CalNewDuty(PWM0, PWM_CHANNEL, duty, 1000);
 
 			if (is_flag_set(flag_reverse))
 			{
@@ -168,6 +179,7 @@ void UART0_Init(void)
 	UART_SetTimeoutCnt(UART0, 20);
 
 	printf("\r\nCLK_GetCPUFreq : %8d\r\n",CLK_GetCPUFreq());
+	printf("CLK_GetHCLKFreq : %8d\r\n",CLK_GetHCLKFreq());	
 	printf("CLK_GetHXTFreq : %8d\r\n",CLK_GetHXTFreq());
 	printf("CLK_GetLXTFreq : %8d\r\n",CLK_GetLXTFreq());	
 	printf("CLK_GetPCLK0Freq : %8d\r\n",CLK_GetPCLK0Freq());
@@ -180,14 +192,28 @@ void SYS_Init(void)
     /* Unlock protected registers */
     SYS_UnlockReg();
 
-    /* Enable HIRC clock (Internal RC 48MHz) */
-    CLK_EnableXtalRC(CLK_PWRCTL_HIRCEN_Msk);
+    GPIO_SetMode(PF, BIT2|BIT3, GPIO_MODE_INPUT);
 
+    /* Enable HIRC clock (Internal RC 48MHz) */
+    CLK_EnableXtalRC(CLK_PWRCTL_HIRCEN_Msk|CLK_PWRCTL_HXTEN_Msk);
+	
     /* Wait for HIRC clock ready */
-    CLK_WaitClockReady(CLK_STATUS_HIRCSTB_Msk);
+    CLK_WaitClockReady(CLK_STATUS_HIRCSTB_Msk|CLK_STATUS_HXTSTB_Msk);
+	
+//    /* Disable PLL first to avoid unstable when setting PLL */
+//    CLK_DisablePLL();
+
+//    /* Set PLL frequency */
+//    CLK->PLLCTL = (CLK->PLLCTL & ~(0x000FFFFFul)) | 0x0008C03Eul;
+
+//    /* Waiting for PLL ready */
+//    CLK_WaitClockReady(CLK_STATUS_PLLSTB_Msk);
 
     /* Select HCLK clock source as HIRC and HCLK source divider as 1 */
-    CLK_SetHCLK(CLK_CLKSEL0_HCLKSEL_HIRC, CLK_CLKDIV0_HCLK(1));
+//    CLK_SetHCLK(CLK_CLKSEL0_HCLKSEL_HIRC, CLK_CLKDIV0_HCLK(1));
+    CLK_SetHCLK(CLK_CLKSEL0_HCLKSEL_PLL, CLK_CLKDIV0_HCLK(1));
+
+//    CLK->PCLKDIV = (CLK_PCLKDIV_APB0DIV_DIV1 | CLK_PCLKDIV_APB1DIV_DIV1);
 
     /* Enable UART0 clock */
     CLK_EnableModuleClock(UART0_MODULE);
@@ -198,12 +224,18 @@ void SYS_Init(void)
     CLK_SetModuleClock(UART0_MODULE, CLK_CLKSEL1_UART0SEL_PCLK0, CLK_CLKDIV0_UART0(1));
     CLK_SetModuleClock(TMR1_MODULE, CLK_CLKSEL1_TMR1SEL_HIRC, 0);
     CLK_SetModuleClock(PWM0_MODULE, CLK_CLKSEL2_PWM0SEL_PCLK0, 0);
-	
+
     /* Set PB multi-function pins for UART0 RXD=PB.12 and TXD=PB.13 */
     SYS->GPB_MFPH = (SYS->GPB_MFPH & ~(SYS_GPB_MFPH_PB12MFP_Msk | SYS_GPB_MFPH_PB13MFP_Msk))    |       \
                     (SYS_GPB_MFPH_PB12MFP_UART0_RXD | SYS_GPB_MFPH_PB13MFP_UART0_TXD);
 
-    SYS->GPA_MFPL = (SYS->GPA_MFPL & (~SYS_GPA_MFPL_PA5MFP_Msk)) | SYS_GPA_MFPL_PA5MFP_PWM0_CH0;
+#if defined (ENABLE_PWM_CH0)
+//    SYS->GPA_MFPL = (SYS->GPA_MFPL & (~SYS_GPA_MFPL_PA5MFP_Msk)) | SYS_GPA_MFPL_PA5MFP_PWM0_CH0;
+    SYS->GPB_MFPL = (SYS->GPB_MFPL & (~SYS_GPB_MFPL_PB5MFP_Msk)) | SYS_GPB_MFPL_PB5MFP_PWM0_CH0;
+#elif defined (ENABLE_PWM_CH4)
+    SYS->GPB_MFPL = (SYS->GPB_MFPL & (~SYS_GPB_MFPL_PB1MFP_Msk)) | SYS_GPB_MFPL_PB1MFP_PWM0_CH4;	
+
+#endif
 	
     /* Update System Core Clock */
     SystemCoreClockUpdate();
@@ -225,7 +257,7 @@ int main()
     SYS_Init();
 
     UART0_Init();
-
+	
 	GPIO_Init();
 
 	PWM0_Init();
